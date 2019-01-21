@@ -2,7 +2,7 @@
   (:require [clojure.test :refer [is]]))
 
 (def nplayers 438)
-(def highest-marble 71626)
+(def highest-marble 7162600)
 
 
 (defn add-at-index
@@ -19,7 +19,7 @@
 (defn remove-at-index
   {:test (fn []
            (is (= '(1 2 3 4 6 7) (remove-at-index [1 2 3 4 5 6 7] 4)))
-           (is (= '(1 2 3 4 5 6 7) (remove-at-index [1 2 3 4 5 6 7] 100 )))
+           (is (= '(1 2 3 4 5 6 7) (remove-at-index [1 2 3 4 5 6 7] 100)))
            (is (= '(2 3 4 5 6 7) (remove-at-index [1 2 3 4 5 6 7] 0))))}
 
   [coll index]
@@ -53,6 +53,7 @@
                 points               :points
                 player               :player}
                marble]
+            (when (= 0 (mod marble 1000000)) (println marble))
             (if (= 0 (mod marble 23))
               (let [pick-up-index (get-index circle current-marble-index -7)
                     pick-up-score (nth circle pick-up-index)

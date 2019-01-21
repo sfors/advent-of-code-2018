@@ -5,13 +5,21 @@
 
 (defn read-input
   [mode]
-  (let [filename (if (= mode :test) "input-15-2.txt" "input-15.txt")]
+  (let [filename (cond (= mode :test2)
+                       "input-15-2.txt"
+                       (= mode :test3)
+                       "input-15-3.txt"
+                       (= mode :test4)
+                       "input-15-4.txt"
+                       (= mode :real)
+                       "input-15.txt")]
     (->> (slurp (str "resources/input/" filename))
          (str/split-lines))))
 
 (defn get-new-unit
   [type pos]
-  {:id (str (first pos) (second pos)) :type type :pos pos :ap 3 :hp 200})
+  (let [ap (if (= type :elf) 34 3)]
+    {:id (str (first pos) (second pos)) :type type :pos pos :ap ap :hp 200}))
 
 
 (defn get-unit-type
@@ -260,16 +268,24 @@
 
 (defn attack
   {:test (fn []
-           (let [attacker {:id "1" :type :goblin :pos [5 5] :ap 3 :hp 200}
-                 defender {:id "2" :type :elf :pos [5 6] :ap 3 :hp 200}
-                 pre-state {:units [attacker defender]}
-                 state (attack pre-state "1" "2")]
-             (is (= 197 (:hp (get-unit state "2"))))))}
+           (let [unit1 {:id "1" :type :goblin :pos [5 5] :ap 3 :hp 200}
+                 unit2 {:id "2" :type :elf :pos [5 6] :ap 3 :hp 200}
+                 unit3 {:id "3" :type :elf :pos [3 3] :ap 3 :hp 2}
+                 pre-state {:units [unit1 unit2 unit3]}
+                 state (-> pre-state
+                           (attack "2" "3")
+                           (attack "1" "2"))]
+             (is (= 197 (:hp (get-unit state "2"))))
+             (is (nil? (get-unit state "3")))
+             ))}
   [state attacker defendant]
   (let [dmg (:ap (get-unit state attacker))]
     (assoc state :units (reduce (fn [units unit]
                                   (if (= defendant (:id unit))
-                                    (conj units (take-dmg unit dmg))
+                                    (let [damaged-unit (take-dmg unit dmg)]
+                                      (if (> (:hp damaged-unit) 0)
+                                        (conj units damaged-unit)
+                                        units))
                                     (conj units unit))) [] (:units state)))))
 
 
@@ -293,6 +309,15 @@
   (some #(= element %) coll))
 
 
+(defn get-adjacent-available-positions
+  [state pos]
+  (reduce (fn [positions {pos :pos}]
+            (if (and (walkable? state pos)
+                     (not (blocked? state pos)))
+              (conj positions pos)
+              positions)) [] (get-adjacent-positions pos)))
+
+
 (defn find-fighting-positions
   {:test (fn []
            (let [state (get-state ["#######"
@@ -309,59 +334,124 @@
   [state id]
   (->>
     (reduce (fn [fighting-positions enemy]
-              (let [adjacent-positions (get-adjacent-positions (:pos enemy))]
-                (concat fighting-positions
-                        (reduce (fn [positions {pos :pos}]
-                                  (if (and (walkable? state pos)
-                                           (not (blocked? state pos)))
-                                    (conj positions pos)
-                                    positions)) [] adjacent-positions))))
+              (concat fighting-positions
+                      (get-adjacent-available-positions state (:pos enemy))))
             [] (get-enemies state id))
     (sort-by #(reading-order-pos % state))))
 
 
-(defn get-adjacent-fighting-positions
-  [state pos]
-  (reduce (fn [positions {pos :pos}]
-            (if (and (walkable? state pos)
-                     (not (blocked? state pos)))
-              (conj positions pos)
-              positions)) [] adjacent-positions)
-  )
+(defn update-visited
+  {:test (fn []
+           (let [visited {[3 3] {:distance 0}
+                          [5 4] {:distance 4 :from [4 2]}
+                          [5 8] {:distance 9 :from [2 4]}}
+                 new-visited (-> visited
+                                 (update-visited {:to [5 4] :distance 3 :from [9 9]})
+                                 (update-visited {:to [5 8] :distance 11 :from [7 7]})
+                                 (update-visited {:to [4 4] :distance 2 :from [14 3]}))]
+             (is (= (get new-visited [5 4]) {:distance 3 :from [9 9]}))
+             (is (= (get new-visited [5 8]) {:distance 9 :from [2 4]}))
+             (is (= (get new-visited [3 3]) {:distance 0}))
+             (is (= (get new-visited [4 4]) {:distance 2 :from [14 3]}))))}
+  [visited {to :to from :from distance :distance}]
+  (let [move {:from from :distance distance}]
+    (if (some? (get visited to))
+      (update visited to
+              (fn [old new]
+                (if (> (:distance old) (:distance new))
+                  new
+                  old)) move)
+      (assoc visited to move))))
 
 
-(defn find-closest-target
+(defn get-reachable-positions
   [state id]
-  (let [start-pos (get-position state id)
-        fighting-positions (find-fighting-positions state id)]
-    (loop [visited [start-pos]
-           to-visit []
-           distance 1
-           current-pos start-pos]
-      (let [adjacent-positions (get-adjacent-positions start-pos)
-            available-moves (reduce (fn [moves move]
-                                      (let [pos (:pos move)]
-                                        (if (and (walkable? state pos)
-                                                 (not (blocked? state pos)))
-                                          (conj moves move)))) [] adjacent-positions)]
-        )
+  (let [start-pos (get-position state id)]
+    (loop [visited {start-pos {:distance 0}}
+           to-explore []
+           {distance :distance current-pos :pos} {:pos start-pos :distance 0}]
+      ;(println "visited" visited)
+      ;(println "to-exp" to-explore)
+      ;(println "distance" distance "current-pos" current-pos)
+      (let [available-moves (get-adjacent-available-positions state current-pos)
+            ;moves-in-fighting-pos (filter #(in? fighting-positions (:pos %)) available-moves)
+            new-moves (reduce (fn [result move]
+                                (if (not (some? (get visited move)))
+                                  (conj result {:from     current-pos
+                                                :to       move
+                                                :distance (inc distance)})
+                                  result)) [] available-moves)
+            new-visited (reduce (fn [result move]
+                                  (assoc result (:to move) (dissoc move :to))) visited new-moves)
+            new-to-explore (reduce (fn [result {to :to distance :distance}]
+                                     (conj result {:pos to :distance distance})) to-explore new-moves)]
+        ;(println "current" current-pos "available moves" available-moves "new-moves" new-moves)
+        ;(println "explore" new-to-explore)
+        ;(println "new-visited" new-visited)
+        (if (empty? new-to-explore)
+          new-visited
+          (recur new-visited (vec (rest new-to-explore)) (first new-to-explore)))))))
 
 
-      {:pos      start-pos
-       :distance 0}
+(defn get-reachable-fighting-positions
+  [state id reachable-positions]
+  (let [fighting-positions (find-fighting-positions state id)]
+    ;(println "figthing positions" fighting-positions)
+    (reduce (fn [result pos]
+              (let [reachable-fighting-position (get reachable-positions pos)]
+                ;(println "reach fight pos" reachable-fighting-position)
+                (if (some? reachable-fighting-position)
+                  (conj result {:pos      pos
+                                :distance (:distance reachable-fighting-position)})
+                  result))
+              ) [] fighting-positions)))
 
-      )
 
-    )
+(defn get-closest-fighting-position
+  [reachable-fighting-positions]
+  (reduce (fn [result pos]
+            (let [current-closest-distance (:distance (first result))]
+              (cond (> current-closest-distance (:distance pos))
+                    [pos]
+                    (= current-closest-distance (:distance pos))
+                    (conj result pos)
+                    (< current-closest-distance (:distance pos))
+                    result)))
+          [(first reachable-fighting-positions)]
+          (rest reachable-fighting-positions)))
 
-  )
 
+(defn get-next-pos
+  [state id]
+  (let [reachable-positions (get-reachable-positions state id)
+        reachable-fighting-positions (get-reachable-fighting-positions state id reachable-positions)
+        closest-fighting-positions (get-closest-fighting-position reachable-fighting-positions)
+        closest-fighting-pos (first (sort-by #(reading-order-pos (:pos %) state) closest-fighting-positions))
+        path (loop [current-pos (:pos closest-fighting-pos)
+                    path (list (:pos closest-fighting-pos))]
+               (let [next (:from (get reachable-positions current-pos))]
+                 (if (some? next)
+                   (recur next (cons next path))
+                   path)))]
+    ;(println "start-pos" (get-position state id))
+    ;(println "reach" reachable-positions)
+    ;(println "reach fight" reachable-fighting-positions)
+    ;(println "closest" closest-fighting-pos)
+    ;(println "path" path)
+    (second path)))
 
 
 (defn move
   [state id]
-  (println "move" id)
-  state)
+  (update state :units (fn [units]
+                         (reduce (fn [result unit]
+                                   (conj result (if (= (:id unit) id)
+                                                  (let [next-pos (get-next-pos state id)]
+                                                    (if (some? next-pos)
+                                                      (assoc unit :pos next-pos)
+                                                      unit))
+                                                  unit))) [] units)))
+  )
 
 
 (defn do-turn
@@ -378,3 +468,54 @@
                 (attack $ id first-adjacent)
                 $))))))
 
+
+(defn sort-units
+  [state]
+  (update state :units (fn [units]
+                         (sort-by #(reading-order-pos (:pos %) state) units))))
+
+
+(defn number-of-elves
+  [state]
+  (count (get-elves (:units state))))
+
+
+(defn do-one-turn
+  [in-state]
+  (loop [state (sort-units in-state)
+         done []
+         todo (map :id (:units state))]
+    (let [id (first todo)
+          alive (not (nil? (get-unit state id)))
+          new-state (if alive (do-turn state id) state)
+          new-done (if alive (conj done id) done)]
+      (if (empty? (rest todo))
+        new-state
+        (recur new-state new-done (vec (rest todo)))))))
+
+
+(defn sum-hp
+  [state]
+  (->> (map :hp (:units state))
+       (reduce +)))
+
+
+(defn get-first-answer
+  [in-state]
+  (let [elves (number-of-elves in-state)]
+    (loop [state in-state
+           round 0]
+      (let [units (:units state)
+            any-enemies (seq (get-enemies state (:id (first units))))]
+        (if any-enemies
+          (let [new-state (do-one-turn state)]
+            (print-cave (draw-cave new-state))
+            (recur new-state (inc round)))
+          (let [hp-sum (sum-hp state)
+                score (* hp-sum (dec round))
+                elf-deaths (- elves (number-of-elves state))]
+            {:state state
+             :round (dec round)
+             :hp-sum hp-sum
+             :score score
+             :elf-deaths elf-deaths}))))))
